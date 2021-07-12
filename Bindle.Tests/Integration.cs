@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
+using static Deislabs.Bindle.GetInvoiceOptions;
 
-using static Bindle.GetInvoiceOptions;
-
-namespace Bindle.Tests
+namespace Deislabs.Bindle.Tests
 {
     // To run this against the data assumed in the integration tests, run the Bindle server
     // to serve files on port 14044 from the test/data directory.  If you have Rust installed you can
@@ -13,8 +15,58 @@ namespace Bindle.Tests
     //
     // RUST_LOG=info cargo run --bin bindle-server --features="cli" -- -i 127.0.0.1:14044 -d <this_repo>/Bindle.Tests/data
 
-    public class Integration
+    public class IntegrationFixture
     {
+        public IntegrationFixture()
+        {
+            var bindlePath = Environment.GetEnvironmentVariable("BINDLE_SERVER_PATH");
+            if (!string.IsNullOrEmpty(bindlePath))
+            {
+
+                var fullPath = Path.GetFullPath(Path.Join(bindlePath, "bindle-server"));
+                var dataPath = Path.GetFullPath(Path.Join("../../../data"));
+                Console.WriteLine($"Full Path: {fullPath}");
+                Console.WriteLine($"Data Path: {dataPath}");
+                var psi = new ProcessStartInfo
+                {
+                    FileName = fullPath,
+                    Arguments = $"-i 127.0.0.1:14044 -d {dataPath}",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardError = true,
+                    RedirectStandardOutput = true
+                };
+                psi.Environment["RUST_LOG"] = "info";
+                var process = new Process
+                {
+                    StartInfo = psi
+                };
+                process.OutputDataReceived += (sender, e) =>
+                {
+                    if (!String.IsNullOrEmpty(e.Data))
+                    {
+                        Console.WriteLine(e.Data);
+                    }
+                };
+                process.ErrorDataReceived += (sender, e) =>
+                {
+                    if (!String.IsNullOrEmpty(e.Data))
+                    {
+                        Console.WriteLine(e.Data);
+                    }
+                };
+                process.Start();
+                process.BeginErrorReadLine();
+                process.BeginOutputReadLine();
+                // TODO: something a bit less crappy that this to wait for server to start:
+                Thread.Sleep(5000);
+                Assert.False(process.HasExited);
+            }
+        }
+    }
+    public class Integration : IClassFixture<IntegrationFixture>
+    {
+
         const string DEMO_SERVER_URL = "http://localhost:14044/v1";
 
         [Fact]
@@ -106,7 +158,8 @@ namespace Bindle.Tests
         {
             var client = new BindleClient(DEMO_SERVER_URL);
             await client.YankInvoice("your/fancy/bindle/0.3.0");  // TODO: use one that doesn't conflict with CanFetchInvoice (because Xunit parallelisation)
-            await Assert.ThrowsAsync<BindleYankedException>(async () => {
+            await Assert.ThrowsAsync<BindleYankedException>(async () =>
+            {
                 await client.GetInvoice("your/fancy/bindle/0.3.0");
             });
             var invoice = await client.GetInvoice("your/fancy/bindle/0.3.0", IncludeYanked);
